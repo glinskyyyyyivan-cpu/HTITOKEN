@@ -1,0 +1,188 @@
+import asyncio
+import logging
+import sys
+import os
+from aiohttp import web
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import CommandStart
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+
+TOKEN = "8607898774:AAFimwEzUeMN82UJefBTeqT8Zlipsz8eRMA"
+ADMIN_USERNAME = "kranikmonster"
+
+dp = Dispatcher()
+USER_DB = {}
+
+class WithdrawStates(StatesGroup):
+    waiting_for_amount = State()
+    waiting_for_wallet = State()
+
+def is_admin(evt) -> bool:
+    return evt.from_user.username == ADMIN_USERNAME
+
+def get_main_keyboard(evt) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="🚀 Start Mining", callback_data="start_mining")],
+        [InlineKeyboardButton(text="Profile 👤", callback_data="open_profile")]
+    ]
+    if is_admin(evt):
+        buttons.append([InlineKeyboardButton(text="⚙️ Admin Panel", callback_data="open_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def init_user(uid: int, ref_id: int = None):
+    if uid not in USER_DB:
+        USER_DB[uid] = {"balance": 0, "referrals": 0, "referrer": ref_id}
+        if ref_id and ref_id in USER_DB and ref_id != uid:
+            USER_DB[ref_id]["referrals"] += 1
+            USER_DB[ref_id]["balance"] += 500
+
+@dp.message(CommandStart())
+async def command_start_handler(message: Message, state: FSMContext):
+    await state.clear()
+    uid = message.from_user.id
+    args = message.text.split()
+    ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    init_user(uid, ref_id)
+    text = (
+        "👋 <b>Welcome to HTI Miner!</b>\n\n"
+        "⛏ Mine HTI tokens directly to your Pool Wallet.\n"
+        "⚡ Tap to boost mining speed!\n"
+        "🔗 Connect your TON wallet.\n"
+        "💰 Hold HTI to upgrade your miner level!\n\n"
+        "Click below to start"
+    )
+    await message.answer(text=text, reply_markup=get_main_keyboard(message))
+
+@dp.callback_query(F.data == "go_to_menu")
+async def back_to_menu(cq: CallbackQuery, state: FSMContext):
+    await state.clear()
+    init_user(cq.from_user.id)
+    text = (
+        "👋 <b>Welcome to HTI Miner!</b>\n\n"
+        "⛏ Mine HTI tokens directly to your Pool Wallet.\n"
+        "⚡ Tap to boost mining speed!\n"
+        "🔗 Connect your TON wallet.\n"
+        "💰 Hold HTI to upgrade your miner level!\n\n"
+        "Click below to start"
+    )
+    await cq.message.answer(text=text, reply_markup=get_main_keyboard(cq))
+    await cq.answer()
+
+@dp.callback_query(F.data == "start_mining")
+async def process_mining_press(cq: CallbackQuery):
+    text = "Hello\nClick the button below to mine HTI. The more you click, the more tokens you'll get!"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⛏ Tap!", callback_data="tap_click")],
+        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
+    ])
+    await cq.message.answer(text=text, reply_markup=kb)
+    await cq.answer()
+
+@dp.callback_query(F.data == "tap_click")
+async def process_tap(cq: CallbackQuery):
+    uid = cq.from_user.id
+    init_user(uid)
+    USER_DB[uid]["balance"] += 1
+    await cq.answer(text=f"+1 HTI! Total: {USER_DB[uid]['balance']} ⛏", show_alert=False)
+
+@dp.callback_query(F.data == "open_profile")
+async def open_profile(cq: CallbackQuery):
+    uid = cq.from_user.id
+    init_user(uid)
+    uname = cq.from_user.username
+    disp = f"@{uname}" if uname else f"ID: {uid}"
+    ref = f"https://t.me{uid}"
+    st = USER_DB[uid]
+    text = f"👤 <b>Your Profile</b>\n\n<b>Username/ID:</b> {disp}\n<b>Total HTI Tokens:</b> {st['balance']} HTI\n<b>Friends invited:</b> {st['referrals']}\n\n🔗 <b>Your Referral Link:</b>\n<code>{ref}</code>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Withdraw 💰", callback_data="start_withdraw")],
+        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
+    ])
+    await cq.message.answer(text=text, reply_markup=kb)
+    await cq.answer()
+
+@dp.callback_query(F.data == "open_admin")
+async def open_admin_panel(cq: CallbackQuery):
+    if not is_admin(cq): return
+    text = f"⚙️ <b>Welcome Admin</b>\n\nTo give tokens, just send a text message in format:\n<code>give ID AMOUNT</code>\n\nExample:\n<code>give {cq.from_user.id} 5000</code>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
+    ])
+    await cq.message.answer(text=text, reply_markup=kb)
+    await cq.answer()
+
+@dp.message(lambda msg: msg.text and msg.text.lower().startswith("give"))
+async def text_give_tokens(message: Message, state: FSMContext):
+    if not is_admin(message): return
+    await state.clear()
+    try:
+        args = message.text.split()
+        if len(args) != 3: raise ValueError
+        tid = int(args[1])
+        amt = int(args[2])
+        init_user(tid)
+        USER_DB[tid]["balance"] += amt
+        await message.answer(f"✅ Success! Added {amt} HTI to <code>{tid}</code>.\nNew balance: {USER_DB[tid]['balance']} HTI.")
+    except Exception:
+        await message.answer("❌ Format error. Use: <code>give ID AMOUNT</code>\nExample: <code>give 5370488598 10000</code>")
+
+@dp.callback_query(F.data == "start_withdraw")
+async def withdraw_amount_request(cq: CallbackQuery, state: FSMContext):
+    await cq.message.answer("Choose a number from 2500 to 100000")
+    await state.set_state(WithdrawStates.waiting_for_amount)
+    await cq.answer()
+
+@dp.message(WithdrawStates.waiting_for_amount)
+async def process_withdraw_amount(message: Message, state: FSMContext):
+    if not message.text.strip().isdigit():
+        await message.answer("Please enter a valid number from 2500 to 100000")
+        return
+    amt = int(message.text.strip())
+    if amt < 2500 or amt > 100000:
+        await message.answer("Please enter a valid number from 2500 to 100000")
+        return
+    uid = message.from_user.id
+    init_user(uid)
+    if USER_DB[uid]["balance"] < amt:
+        await message.answer("Not enough tokens.")
+        await state.clear()
+        return
+    await state.update_data(w_amt=amt)
+    await message.answer("🔥Send yout TON wallet🔥")
+    await state.set_state(WithdrawStates.waiting_for_wallet)
+
+@dp.message(WithdrawStates.waiting_for_wallet)
+async def process_withdraw_wallet(message: Message, state: FSMContext):
+    w = message.text.strip()
+    data = await state.get_data()
+    amt = data.get("w_amt")
+    uid = message.from_user.id
+    USER_DB[uid]["balance"] -= amt
+    await message.answer(f"✅ Application accepted!\nAmount: {amt} HTI\nWallet: {w}", reply_markup=get_main_keyboard(message))
+    await state.clear()
+
+async def handle_web(request):
+    return web.Response(text="Bot is running!")
+
+async def main():
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    
+    # Запуск веб-сервера для Render
+    app = web.Application()
+    app.router.add_get("/", handle_web)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    asyncio.create_task(site.start())
+    
+    print(f"🚀 Web server started on port {port}")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
