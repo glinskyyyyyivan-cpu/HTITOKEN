@@ -3,4 +3,5 @@ services:
     name: hti-miner-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: python HTI.py
+
