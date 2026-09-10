@@ -128,9 +128,9 @@ async def play_the_dice(cq: CallbackQuery, state: FSMContext):
     await asyncio.sleep(2.5)
     
     won = False
-    if choice == "1_3" and dice_value in [1, 2, 3]: won = True
-    elif choice == "4_6" and dice_value in [4, 5, 6]: won = True
-    elif choice == "odd" and dice_value in [1, 3, 5]: won = True
+    if choice == "1_3" and dice_value in: won = True
+    elif choice == "4_6" and dice_value in: won = True
+    elif choice == "odd" and dice_value in: won = True
     
     if won:
         USER_DB[uid]["balance"] += bet
@@ -197,7 +197,7 @@ async def text_give_tokens(message: Message, state: FSMContext):
         tid, amt = int(args[1]), int(args[2])
         init_user(tid)
         USER_DB[tid]["balance"] += amt
-        await message.answer(f"✅ Success! Added {amt} HTI to <code>{tid}</code>.\nNew balance: {USER_DB[tid]['balance']} HTI.")
+        await message.answer(f"✅ Success! Added {amt} HTI to {tid}.\nNew balance: {USER_DB[tid]['balance']} HTI.")
     except Exception:
         await message.answer("❌ Format error. Use: <code>give ID AMOUNT</code>")
 
