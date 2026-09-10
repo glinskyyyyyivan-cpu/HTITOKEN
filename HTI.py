@@ -127,9 +127,9 @@ async def play_the_dice(cq: CallbackQuery, state: FSMContext):
     await asyncio.sleep(2.5)
     
     won = False
-    if choice == "1_3" and dice_value in [1, 2, 3]: won = True
-    elif choice == "4_6" and dice_value in [4, 5, 6]: won = True
-    elif choice == "odd" and dice_value in [1, 3, 5]: won = True
+    if choice == "1_3" and dice_value in: won = True
+    elif choice == "4_6" and dice_value in: won = True
+    elif choice == "odd" and dice_value in: won = True
     
     if won:
         USER_DB[uid]["balance"] += bet
