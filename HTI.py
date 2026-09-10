@@ -21,12 +21,16 @@ class WithdrawStates(StatesGroup):
     waiting_for_amount = State()
     waiting_for_wallet = State()
 
+class DiceStates(StatesGroup):
+    waiting_for_bet = State()
+
 def is_admin(evt) -> bool:
     return evt.from_user.username == ADMIN_USERNAME
 
 def get_main_keyboard(evt) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="🚀 Start Mining", callback_data="start_mining")],
+        [InlineKeyboardButton(text="🎲 Play Dice", callback_data="open_dice_menu")],
         [InlineKeyboardButton(text="Profile 👤", callback_data="open_profile")]
     ]
     if is_admin(evt):
@@ -35,7 +39,7 @@ def get_main_keyboard(evt) -> InlineKeyboardMarkup:
 
 def init_user(uid: int, ref_id: int = None):
     if uid not in USER_DB:
-        USER_DB[uid] = {"balance": 0, "referrals": 0, "referrer": ref_id}
+        USER_DB[uid] = {"balance": 100, "referrals": 0, "referrer": ref_id}
         if ref_id and ref_id in USER_DB and ref_id != uid:
             USER_DB[ref_id]["referrals"] += 1
             USER_DB[ref_id]["balance"] += 500
@@ -70,6 +74,75 @@ async def back_to_menu(cq: CallbackQuery, state: FSMContext):
         "Click below to start"
     )
     await cq.message.answer(text=text, reply_markup=get_main_keyboard(cq))
+    await cq.answer()
+
+@dp.callback_query(F.data == "open_dice_menu")
+async def open_dice_menu(cq: CallbackQuery, state: FSMContext):
+    uid = cq.from_user.id
+    init_user(uid)
+    balance = USER_DB[uid]["balance"]
+    await cq.message.answer(
+        f"🎲 <b>Dice Game Mode</b>\n\nYour Current Balance: <b>{balance} HTI</b>\n\nPlease enter your bet amount:"
+    )
+    await state.set_state(DiceStates.waiting_for_bet)
+    await cq.answer()
+
+@dp.message(DiceStates.waiting_for_bet)
+async def process_dice_bet(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    init_user(uid)
+    if not message.text.strip().isdigit():
+        await message.answer("❌ Please enter a valid number:")
+        return
+    bet = int(message.text.strip())
+    if bet <= 0:
+        await message.answer("❌ Bet must be greater than 0:")
+        return
+    if USER_DB[uid]["balance"] < bet:
+        await message.answer(f"❌ Not enough tokens. Your balance is {USER_DB[uid]['balance']} HTI:")
+        return
+    await state.update_data(current_bet=bet)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔹 1 - 3", callback_data="dice_play_1_3"),
+         InlineKeyboardButton(text="🔸 4 - 6", callback_data="dice_play_4_6")],
+        [InlineKeyboardButton(text="🎲 Odd (Нечетное)", callback_data="dice_play_odd")],
+        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
+    ])
+    await message.answer(f"💰 Bet accepted: <b>{bet} HTI</b>\nGuess what will roll on the dice:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("dice_play_"))
+async def play_the_dice(cq: CallbackQuery, state: FSMContext):
+    uid = cq.from_user.id
+    init_user(uid)
+    data = await state.get_data()
+    bet = data.get("current_bet")
+    if not bet or USER_DB[uid]["balance"] < bet:
+        await cq.message.answer("❌ Session error.", reply_markup=get_main_keyboard(cq))
+        await state.clear()
+        await cq.answer()
+        return
+    choice = cq.data.replace("dice_play_", "")
+    dice_msg = await cq.message.answer_dice(emoji="🎲")
+    dice_value = dice_msg.dice.value
+    await asyncio.sleep(2.5)
+    
+    won = False
+    if choice == "1_3" and dice_value in [1, 2, 3]: won = True
+    elif choice == "4_6" and dice_value in [4, 5, 6]: won = True
+    elif choice == "odd" and dice_value in [1, 3, 5]: won = True
+    
+    if won:
+        USER_DB[uid]["balance"] += bet
+        res = f"🎉 <b>You won!</b>\n\nRolled: <b>{dice_value}</b>\nProfit: <b>+{bet} HTI</b>\nBalance: <b>{USER_DB[uid]['balance']} HTI</b>"
+    else:
+        USER_DB[uid]["balance"] -= bet
+        res = f"😭 <b>You lost!</b>\n\nRolled: <b>{dice_value}</b>\nLoss: <b>-{bet} HTI</b>\nBalance: <b>{USER_DB[uid]['balance']} HTI</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Play Again", callback_data="open_dice_menu")],
+        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
+    ])
+    await cq.message.answer(text=res, reply_markup=kb)
+    await state.clear()
     await cq.answer()
 
 @dp.callback_query(F.data == "start_mining")
@@ -108,10 +181,8 @@ async def open_profile(cq: CallbackQuery):
 @dp.callback_query(F.data == "open_admin")
 async def open_admin_panel(cq: CallbackQuery):
     if not is_admin(cq): return
-    text = f"⚙️ <b>Welcome Admin</b>\n\nTo give tokens, just send a text message in format:\n<code>give ID AMOUNT</code>\n\nExample:\n<code>give {cq.from_user.id} 5000</code>"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]
-    ])
+    text = f"⚙️ <b>Welcome Admin</b>\n\nTo give tokens, send text message:\n<code>give ID AMOUNT</code>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Menu 🔙", callback_data="go_to_menu")]])
     await cq.message.answer(text=text, reply_markup=kb)
     await cq.answer()
 
@@ -122,13 +193,12 @@ async def text_give_tokens(message: Message, state: FSMContext):
     try:
         args = message.text.split()
         if len(args) != 3: raise ValueError
-        tid = int(args[1])
-        amt = int(args[2])
+        tid, amt = int(args[1]), int(args[2])
         init_user(tid)
         USER_DB[tid]["balance"] += amt
         await message.answer(f"✅ Success! Added {amt} HTI to <code>{tid}</code>.\nNew balance: {USER_DB[tid]['balance']} HTI.")
     except Exception:
-        await message.answer("❌ Format error. Use: <code>give ID AMOUNT</code>\nExample: <code>give 5370488598 10000</code>")
+        await message.answer("❌ Format error. Use: <code>give ID AMOUNT</code>")
 
 @dp.callback_query(F.data == "start_withdraw")
 async def withdraw_amount_request(cq: CallbackQuery, state: FSMContext):
@@ -166,23 +236,6 @@ async def process_withdraw_wallet(message: Message, state: FSMContext):
     await state.clear()
 
 async def handle_web(request):
-    return web.Response(text="Bot is running!")
+    return web.Response(text="Bot Alive")
 
 async def main():
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    
-    # Запуск веб-сервера для Render
-    app = web.Application()
-    app.router.add_get("/", handle_web)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    asyncio.create_task(site.start())
-    
-    print(f"🚀 Web server started on port {port}")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
