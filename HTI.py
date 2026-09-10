@@ -2,7 +2,8 @@ import asyncio
 import logging
 import sys
 import os
-from aiohttp import web
+import threading
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -127,9 +128,9 @@ async def play_the_dice(cq: CallbackQuery, state: FSMContext):
     await asyncio.sleep(2.5)
     
     won = False
-    if choice == "1_3" and dice_value in: won = True
-    elif choice == "4_6" and dice_value in: won = True
-    elif choice == "odd" and dice_value in: won = True
+    if choice == "1_3" and dice_value in [1, 2, 3]: won = True
+    elif choice == "4_6" and dice_value in [4, 5, 6]: won = True
+    elif choice == "odd" and dice_value in [1, 3, 5]: won = True
     
     if won:
         USER_DB[uid]["balance"] += bet
@@ -235,7 +236,4 @@ async def process_withdraw_wallet(message: Message, state: FSMContext):
     await message.answer(f"✅ Application accepted!\nAmount: {amt} HTI\nWallet: {w}", reply_markup=get_main_keyboard(message))
     await state.clear()
 
-async def handle_web(request):
-    return web.Response(text="Bot Alive")
-
-async def main():
+def run_web_server():
